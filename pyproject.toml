@@ -1,0 +1,23 @@
+[project]
+name = "airtype"
+version = "0.1.0"
+description = "Fast local speech-to-text that gets out of memory when idle"
+requires-python = ">=3.12"
+dependencies = [
+    "evdev>=1.7.1; sys_platform == 'linux'",
+    "numpy>=1.26.0",
+    "onnxruntime==1.24.4",
+    "platformdirs>=4.4.0",
+    "pynput>=1.8.1",
+    "pyperclip>=1.9.0",
+    "sherpa-onnx>=1.12.0,<2.0",
+    "sounddevice>=0.5.2",
+    "soundfile>=0.12.1",
+]
+
+[project.scripts]
+airtype = "airtype.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
