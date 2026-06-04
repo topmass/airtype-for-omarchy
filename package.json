@@ -7,6 +7,14 @@
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/topmass/airtype.git"
+  },
+  "bugs": {
+    "url": "https://github.com/topmass/airtype/issues"
+  },
+  "homepage": "https://github.com/topmass/airtype#readme",
   "bin": {
     "airtype": "./bin/airtype.js"
   },
