@@ -180,6 +180,9 @@ class EvdevHotkeyListener:
         for thread in self._threads:
             thread.join(timeout=0.5)
 
+    def is_alive(self) -> bool:
+        return any(thread.is_alive() for thread in self._threads)
+
 
 def start_global_hotkey_listener(on_press_name, on_release_name, hotkey_keys: list[str]):
     listener = EvdevHotkeyListener.start(

@@ -10,6 +10,8 @@ from .pipeline import AirtypePipeline
 
 DOUBLE_TAP_THRESHOLD = 0.3
 STOP_COOLDOWN = 0.25
+LISTENER_HEALTH_INTERVAL = 2.0
+RESUME_GAP_THRESHOLD = 10.0
 
 
 class AirtypeService:
@@ -34,16 +36,14 @@ class AirtypeService:
         self._hotkey_combo_active = False
         self._listener = None
         self._listener_backend = "unavailable"
+        self._listener_checked_at = 0.0
+        self._last_loop_at = time.time()
         self._commands: queue.Queue[str] = queue.Queue()
         self._lock = threading.RLock()
         self._closed = threading.Event()
 
     def run(self) -> int:
-        self._listener, self._listener_backend = start_global_hotkey_listener(
-            self._on_press_name,
-            self._on_release_name,
-            self.hotkey_keys,
-        )
+        self._start_listener()
         self._emit(
             "ready",
             state=self._state,
@@ -60,6 +60,8 @@ class AirtypeService:
                 try:
                     command = self._commands.get(timeout=0.2)
                 except queue.Empty:
+                    self._restart_listener_after_resume_gap()
+                    self._restart_listener_if_dead()
                     continue
                 if command == "quit":
                     self.close()
@@ -70,11 +72,63 @@ class AirtypeService:
             self.close()
         return 0
 
-    def close(self) -> None:
-        self._closed.set()
+    def _start_listener(self) -> None:
+        self._listener, self._listener_backend = start_global_hotkey_listener(
+            self._on_press_name,
+            self._on_release_name,
+            self.hotkey_keys,
+        )
+        self._listener_checked_at = time.time()
+
+    def _listener_alive(self) -> bool:
+        if self._listener is None:
+            return False
+        is_alive = getattr(self._listener, "is_alive", None)
+        if callable(is_alive):
+            return bool(is_alive())
+        return True
+
+    def _restart_listener_if_dead(self) -> None:
+        now = time.time()
+        if now - self._listener_checked_at < LISTENER_HEALTH_INTERVAL:
+            return
+        self._listener_checked_at = now
+        if self._listener_alive():
+            return
+
+        self._restart_listener(f"Global listener restarted: {self._listener_backend}")
+
+    def _restart_listener_after_resume_gap(self) -> None:
+        now = time.time()
+        gap = now - self._last_loop_at
+        self._last_loop_at = now
+        if gap < RESUME_GAP_THRESHOLD:
+            return
+
+        self._restart_listener(f"Global listener refreshed after resume: {self._listener_backend}")
+
+    def _restart_listener(self, message: str) -> None:
+        self._stop_listener()
+        self._pressed_hotkey_keys.clear()
+        self._hotkey_combo_active = False
+        self._last_hotkey_time = 0.0
+        self._start_listener()
+        self._emit(
+            "listener",
+            state=self._state,
+            hotkey=format_hotkey(self.hotkey_keys),
+            listener=self._listener_backend,
+            message=message,
+        )
+
+    def _stop_listener(self) -> None:
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
+
+    def close(self) -> None:
+        self._closed.set()
+        self._stop_listener()
         with self._lock:
             if self._state == "recording":
                 self._stop_recording()

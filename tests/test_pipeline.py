@@ -108,6 +108,18 @@ class FakeSession:
         return "hello", False
 
 
+class FakeHotkeyListener:
+    def __init__(self, alive: bool = True) -> None:
+        self.alive = alive
+        self.stopped = False
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 class AirtypeTests(unittest.TestCase):
     def test_paste_mode_accepts_cli_spelling(self) -> None:
         self.assertEqual(normalize_paste_mode("ctrl-shift-v"), "ctrl_shift_v")
@@ -192,6 +204,40 @@ class AirtypeTests(unittest.TestCase):
 
         self.assertEqual(service.pipeline.started, 1)
         self.assertEqual(service.pipeline.stopped, 1)
+
+    def test_service_restarts_dead_hotkey_listener(self) -> None:
+        listeners = [FakeHotkeyListener(False), FakeHotkeyListener(True)]
+        service = AirtypeService("copy-only", 0, "alt", copy=False)
+        service._emit = lambda *args, **kwargs: None
+
+        with mock.patch(
+            "airtype.service.start_global_hotkey_listener",
+            side_effect=[(listeners[0], "evdev"), (listeners[1], "evdev")],
+        ):
+            service._start_listener()
+            service._listener_checked_at = 0.0
+            with mock.patch("airtype.service.time.time", return_value=10.0):
+                service._restart_listener_if_dead()
+
+        self.assertTrue(listeners[0].stopped)
+        self.assertIs(service._listener, listeners[1])
+
+    def test_service_refreshes_hotkey_listener_after_resume_gap(self) -> None:
+        listeners = [FakeHotkeyListener(True), FakeHotkeyListener(True)]
+        service = AirtypeService("copy-only", 0, "alt", copy=False)
+        service._emit = lambda *args, **kwargs: None
+
+        with mock.patch(
+            "airtype.service.start_global_hotkey_listener",
+            side_effect=[(listeners[0], "evdev"), (listeners[1], "evdev")],
+        ):
+            service._start_listener()
+            service._last_loop_at = 1.0
+            with mock.patch("airtype.service.time.time", return_value=20.0):
+                service._restart_listener_after_resume_gap()
+
+        self.assertTrue(listeners[0].stopped)
+        self.assertIs(service._listener, listeners[1])
 
     def test_sherpa_transcribe_array_batches_long_audio(self) -> None:
         audio = np.zeros(SAMPLE_RATE * 35, dtype=np.float32)
