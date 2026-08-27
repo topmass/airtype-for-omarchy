@@ -14,6 +14,7 @@ from airtype.hotkey import format_hotkey, parse_hotkey_keys
 from airtype.clipboard import normalize_paste_mode
 from airtype.model_manager import ModelManager
 from airtype.pipeline import RecordingSession, SAMPLE_RATE, TranscriptResult
+from airtype.registry import DEFAULT_MODEL_KEY, get_model_spec
 from airtype.service import AirtypeService
 
 
@@ -132,13 +133,14 @@ class AirtypeTests(unittest.TestCase):
         self.assertEqual(format_hotkey(keys), "Ctrl+Alt")
 
     def test_default_model_dir_uses_configured_cache_dir(self) -> None:
+        spec = get_model_spec(DEFAULT_MODEL_KEY)
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir) / "models" / asr.DEFAULT_MODEL
+            model_dir = Path(tmpdir) / "models" / spec.dir_name
 
             with mock.patch.object(asr, "configured_model_dir", return_value=model_dir), mock.patch.dict(
                 "os.environ", {}, clear=True
             ):
-                self.assertEqual(asr.default_model_dir(), model_dir)
+                self.assertEqual(asr.default_model_dir(spec), model_dir)
 
     def test_model_dir_env_override_wins(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
@@ -154,35 +156,34 @@ class AirtypeTests(unittest.TestCase):
                 self.assertEqual(cli.main(["settings", "--model-dir", str(model_parent), "--json"]), 0)
                 saved = config.load_config()
 
-        self.assertEqual(saved["model_dir"], str(model_parent / asr.DEFAULT_MODEL))
+        self.assertEqual(saved["model_dir"], str(model_parent))
 
     def test_ensure_model_falls_back_to_hugging_face_files(self) -> None:
+        spec = get_model_spec(DEFAULT_MODEL_KEY)
         downloaded = []
 
-        def fake_urlretrieve(url, target):
+        def fake_urlretrieve(url, target, reporthook=None):
             downloaded.append(url)
-            if url == asr.MODEL_URL:
+            if url == spec.url:
                 raise OSError("primary down")
             Path(target).write_text("model")
 
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
             "urllib.request.urlretrieve", side_effect=fake_urlretrieve
         ):
-            asr._ensure_model(Path(tmpdir) / asr.DEFAULT_MODEL)
+            asr._ensure_model(spec, Path(tmpdir) / spec.dir_name)
 
-        self.assertIn(asr.MODEL_URL, downloaded)
+        self.assertIn(spec.url, downloaded)
         self.assertIn(
-            f"https://huggingface.co/{asr.HF_MODEL_REPO}/resolve/main/tokens.txt",
+            f"https://huggingface.co/{spec.hf_repo}/resolve/main/tokens.txt",
             downloaded,
         )
 
-    def test_cli_defaults_to_record_command(self) -> None:
-        with mock.patch.object(cli, "_ensure_model_ready", return_value=True), mock.patch.object(
-            cli, "_record", return_value=0
-        ) as record:
+    def test_cli_defaults_to_settings_menu(self) -> None:
+        with mock.patch("airtype.menu.run_menu", return_value=0) as run_menu:
             self.assertEqual(cli.main([]), 0)
 
-        record.assert_called_once()
+        run_menu.assert_called_once()
 
     def test_noninteractive_missing_model_does_not_download(self) -> None:
         with mock.patch.object(cli, "model_exists", return_value=False), mock.patch.object(
@@ -192,23 +193,64 @@ class AirtypeTests(unittest.TestCase):
 
         setup.assert_not_called()
 
-    def test_service_double_tap_starts_then_single_tap_stops(self) -> None:
-        service = AirtypeService("copy-only", 0, "alt", copy=False)
+    def _make_service(self) -> AirtypeService:
+        service = AirtypeService(config.default_config())
         service.pipeline = FakePipeline()
-        service._emit = lambda *args, **kwargs: None
+        service._log = lambda *args, **kwargs: None
+        service._ipc = mock.Mock()
+        return service
 
-        with mock.patch("airtype.service.time.time", side_effect=[10.0, 10.2, 10.6]):
-            service._handle_hotkey_activation(10.0)
-            service._handle_hotkey_activation(10.2)
-            service._handle_hotkey_activation(10.6)
+    def test_service_super_double_tap_starts_then_alt_tap_stops(self) -> None:
+        service = self._make_service()
+        # Consumed in order by _on_key calls plus set_recording inside start/stop.
+        times = iter([10.0, 10.05, 10.1, 10.15, 10.2, 10.5, 10.6, 11.0, 11.1, 11.2])
+
+        with mock.patch("airtype.service.time.time", side_effect=lambda: next(times)):
+            service._on_key("super", pressed=True)
+            service._on_key("alt", pressed=True)
+            service._on_key("alt", pressed=False)
+            service._on_key("alt", pressed=True)  # double tap -> start
+            self._drain_commands(service)
+            self.assertEqual(service.pipeline.started, 1)
+
+            service._on_key("alt", pressed=False)
+            service._on_key("super", pressed=False)
+            service._on_key("alt", pressed=True)
+            service._on_key("alt", pressed=False)  # clean tap -> stop
+            self._drain_commands(service)
+
+        self.assertEqual(service.pipeline.stopped, 1)
+
+    def test_service_alt_tab_does_not_stop_recording(self) -> None:
+        service = self._make_service()
+        times = iter([10.0, 10.05, 10.1, 10.15, 10.2, 10.5, 10.6, 11.0, 11.05, 11.1, 11.15])
+
+        with mock.patch("airtype.service.time.time", side_effect=lambda: next(times)):
+            service._on_key("super", pressed=True)
+            service._on_key("alt", pressed=True)
+            service._on_key("alt", pressed=False)
+            service._on_key("alt", pressed=True)
+            self._drain_commands(service)
+            service._on_key("alt", pressed=False)
+            service._on_key("super", pressed=False)
+
+            service._on_key("alt", pressed=True)
+            service._on_key("tab", pressed=True)  # alt+tab chord
+            service._on_key("tab", pressed=False)
+            service._on_key("alt", pressed=False)
+            self._drain_commands(service)
 
         self.assertEqual(service.pipeline.started, 1)
-        self.assertEqual(service.pipeline.stopped, 1)
+        self.assertEqual(service.pipeline.stopped, 0)
+
+    def _drain_commands(self, service: AirtypeService) -> None:
+        while not service._commands.empty():
+            command, reply = service._commands.get_nowait()
+            service._handle_command(command, reply)
 
     def test_service_restarts_dead_hotkey_listener(self) -> None:
         listeners = [FakeHotkeyListener(False), FakeHotkeyListener(True)]
-        service = AirtypeService("copy-only", 0, "alt", copy=False)
-        service._emit = lambda *args, **kwargs: None
+        service = self._make_service()
 
         with mock.patch(
             "airtype.service.start_global_hotkey_listener",
@@ -224,8 +266,7 @@ class AirtypeTests(unittest.TestCase):
 
     def test_service_refreshes_hotkey_listener_after_resume_gap(self) -> None:
         listeners = [FakeHotkeyListener(True), FakeHotkeyListener(True)]
-        service = AirtypeService("copy-only", 0, "alt", copy=False)
-        service._emit = lambda *args, **kwargs: None
+        service = self._make_service()
 
         with mock.patch(
             "airtype.service.start_global_hotkey_listener",

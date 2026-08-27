@@ -9,9 +9,10 @@ import soundfile as sf
 
 from .asr import SAMPLE_RATE, transcribe_array, transcribe_file
 from .clipboard import auto_paste, copy_to_clipboard
-from .config import normalize_paste_mode
+from .config import DEFAULT_TERMINAL_CLASSES, normalize_paste_mode
 from .model_manager import ModelManager
 from .sounds import SOUND_START, SOUND_STOP, play_sound, play_sound_later
+from .terminal import resolve_paste_mode
 
 LIVE_MIN_SEGMENT_SECONDS = 6
 LIVE_MAX_SEGMENT_SECONDS = 25
@@ -38,11 +39,23 @@ class AirtypePipeline:
         paste_mode: str = "copy_only",
         copy: bool = True,
         unload_timeout_seconds: float = 0,
+        paste_fallback: str = "ctrl_v",
+        terminal_classes: list[str] | None = None,
+        sounds_enabled: bool = True,
+        pre_paste: "callable | None" = None,
     ) -> None:
         self.manager = manager or ModelManager()
         self.paste_mode = normalize_paste_mode(paste_mode)
         self.copy = copy
         self.unload_timeout_seconds = unload_timeout_seconds
+        self.paste_fallback = paste_fallback
+        self.terminal_classes = (
+            list(terminal_classes) if terminal_classes is not None else list(DEFAULT_TERMINAL_CLASSES)
+        )
+        self.sounds_enabled = sounds_enabled
+        # Hook run just before the synthetic paste keystroke; the service uses it
+        # to wait until physically held hotkey modifiers are released.
+        self.pre_paste = pre_paste
 
     def transcribe_path(self, path: Path | str) -> TranscriptResult:
         started = time.monotonic()
@@ -53,7 +66,8 @@ class AirtypePipeline:
         return self._finish(text, started, loaded_now)
 
     def start_recording(self) -> "RecordingSession":
-        play_sound(SOUND_START)
+        if self.sounds_enabled:
+            play_sound(SOUND_START)
         session = RecordingSession(self.manager)
         session.start()
         return session
@@ -62,7 +76,7 @@ class AirtypePipeline:
         started = time.monotonic()
         text, loaded_now = session.stop()
         result = self._finish(text, started, loaded_now)
-        if result.text:
+        if result.text and self.sounds_enabled:
             play_sound_later(SOUND_STOP)
         return result
 
@@ -72,7 +86,12 @@ class AirtypePipeline:
         pasted = False
         paste_backend = "copy_only"
         if copied:
-            pasted, paste_backend = auto_paste(self.paste_mode)
+            effective_mode = resolve_paste_mode(
+                self.paste_mode, self.paste_fallback, self.terminal_classes
+            )
+            if effective_mode != "copy_only" and self.pre_paste is not None:
+                self.pre_paste()
+            pasted, paste_backend = auto_paste(effective_mode)
         self.manager.touch()
         unloaded = self.manager.unload_if_idle(self.unload_timeout_seconds)
         return TranscriptResult(
