@@ -211,6 +211,7 @@ class EvdevHotkeyListener:
         self._stop = threading.Event()
         self._devices = []
         self._threads: list[threading.Thread] = []
+        self.device_paths: set[str] = set()
 
     @classmethod
     def start(cls, on_press, on_release, hotkey_keys: set[str]):
@@ -236,6 +237,7 @@ class EvdevHotkeyListener:
                 continue
             if key_caps.intersection(needed_codes):
                 listener._devices.append(device)
+                listener.device_paths.add(path)
 
         if not listener._devices:
             return None
@@ -306,6 +308,35 @@ class EvdevHotkeyListener:
 
     def is_alive(self) -> bool:
         return any(thread.is_alive() for thread in self._threads)
+
+
+def matching_device_paths(hotkey_keys: set[str]) -> set[str]:
+    """Paths of input devices that carry the hotkey key codes right now.
+
+    Used by the service's hotplug check to notice keyboards that appear
+    after the listener enumerated devices (USB/2.4G dongles, Bluetooth).
+    """
+    try:
+        from evdev import InputDevice, ecodes, list_devices
+    except ImportError:
+        return set()
+
+    needed_codes = {
+        code
+        for code, key_name in EvdevHotkeyListener._key_code_names(ecodes).items()
+        if key_name in hotkey_keys
+    }
+    paths: set[str] = set()
+    for path in list_devices():
+        try:
+            device = InputDevice(path)
+            key_caps = set(device.capabilities().get(ecodes.EV_KEY, []))
+            device.close()
+        except (OSError, PermissionError):
+            continue
+        if key_caps.intersection(needed_codes):
+            paths.add(path)
+    return paths
 
 
 def start_global_hotkey_listener(on_press_name, on_release_name, hotkey_keys: list[str]):

@@ -11,11 +11,13 @@ from .config import CONFIG_PATH, load_config
 from .hotkey import (
     HotkeyPolicy,
     format_hotkey,
+    matching_device_paths,
     normalize_hotkey_key_name,
     parse_start_combo,
     start_global_hotkey_listener,
 )
 from .ipc import IPCServer
+from .model_manager import release_freed_memory
 from .pipeline import AirtypePipeline
 
 LISTENER_HEALTH_INTERVAL = 2.0
@@ -36,6 +38,7 @@ class AirtypeService:
         self._listener = None
         self._listener_backend = "unavailable"
         self._listener_checked_at = 0.0
+        self._input_dir_mtime = 0.0
         self._last_loop_at = time.time()
         self._started_at = time.time()
         self._commands: queue.Queue[tuple[dict, Callable[[dict], None] | None]] = queue.Queue()
@@ -99,6 +102,7 @@ class AirtypeService:
                 except queue.Empty:
                     self._restart_listener_after_resume_gap()
                     self._restart_listener_if_dead()
+                    self._restart_listener_on_hotplug()
                     continue
                 self._handle_command(command, reply)
         finally:
@@ -199,6 +203,28 @@ class AirtypeService:
             self._hotkey_keys(),
         )
         self._listener_checked_at = time.time()
+        self._input_dir_mtime = self._current_input_dir_mtime()
+
+    @staticmethod
+    def _current_input_dir_mtime() -> float:
+        try:
+            return os.stat("/dev/input").st_mtime
+        except OSError:
+            return 0.0
+
+    def _restart_listener_on_hotplug(self) -> None:
+        # Cheap gate: /dev/input mtime changes when device nodes come or go
+        # (e.g. a wireless keyboard dongle waking after suspend).
+        if self._listener_backend != "evdev" or self._state == "recording":
+            return
+        mtime = self._current_input_dir_mtime()
+        if mtime == self._input_dir_mtime:
+            return
+        self._input_dir_mtime = mtime
+        current = matching_device_paths(set(self._hotkey_keys()))
+        held = getattr(self._listener, "device_paths", set())
+        if current and current != held:
+            self._restart_listener("listener restarted after input device change")
 
     def _listener_alive(self) -> bool:
         if self._listener is None:
@@ -311,6 +337,10 @@ class AirtypeService:
         self._ipc.broadcast({"event": "state", "state": self._state})
         result = self.pipeline.stop_recording(session)
         self._state = "unloaded" if not self.pipeline.manager.is_loaded() else "ready"
+        if self._state == "unloaded":
+            # Second trim after the session's buffers are gone; the trim inside
+            # unload_if_idle runs too early to return everything to the OS.
+            release_freed_memory()
         words = len(result.text.split())
         self._log(
             f"transcript: {words} words in {result.elapsed_seconds:.2f}s "

@@ -1,9 +1,25 @@
+import ctypes
+import ctypes.util
 import gc
 import threading
 import time
 from contextlib import contextmanager
 
 from .asr import load_model
+
+
+def release_freed_memory() -> None:
+    """Ask glibc to return freed arenas to the OS after a model unload.
+
+    Without this the process RSS stays at the model's peak (~500 MB) even
+    though the memory is free inside the allocator.
+    """
+    try:
+        libc_name = ctypes.util.find_library("c")
+        if libc_name:
+            ctypes.CDLL(libc_name).malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
 
 
 class ModelManager:
@@ -63,6 +79,7 @@ class ModelManager:
 
         del model
         gc.collect()
+        release_freed_memory()
         return True
 
     def unload_now(self) -> bool:

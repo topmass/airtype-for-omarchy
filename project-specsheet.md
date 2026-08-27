@@ -37,7 +37,8 @@ All source in `src/airtype/`:
 3. **The evdev listener reports all keys, not just hotkeys** - dirty-tap chord detection depends on it. Device selection still keys on the hotkey codes.
 4. **Paste-mode "auto" resolves at paste time**, not at config time, so it follows the focused window.
 5. **`model_dir` in config is a parent directory** holding one folder per model (v1 stored the model folder itself; migration strips the leaf).
-6. **The service holds no model when idle** - target is ~26 MB RSS, ~0% CPU. Do not add background timers that keep the model warm by default.
+6. **The service holds no model when idle** - target is ~0% CPU and low RSS. `release_freed_memory()` (glibc `malloc_trim`) must run after unload AND again after the recording session ends (`service._stop_recording`), or RSS parks at the model's ~500 MB peak. Post-cycle idle is ~100 MB. Do not add background timers that keep the model warm by default.
+6b. **Keyboard hotplug**: the evdev listener only enumerates devices when it starts. `_restart_listener_on_hotplug` watches the `/dev/input` directory mtime each idle tick and restarts the listener when the matching device set changes (wireless dongles and Bluetooth keyboards often (re)appear after suspend/resume - this was a real field failure). Do not remove it.
 7. Hotkey testing without a human: create an `evdev.UInput` keyboard, then (re)start the service (the listener enumerates devices at startup), then write KEY_LEFTMETA/KEY_LEFTALT events. Run detached (nohup); simulated Super/Alt reaches the real compositor.
 8. Omarchy notes: the old voxtype tool was removed with `systemctl --user disable --now voxtype`, deleting `~/.config/systemd/user/voxtype.service`, `~/.config/omarchy/hooks/post-update.d/install-voxtype.hook`, `~/.config/voxtype`, `~/.local/share/voxtype`, plus `sudo pacman -Rns voxtype-bin`. Omarchy's F9 binds and bar indicator disappear on their own once the voxtype binary is gone.
 
