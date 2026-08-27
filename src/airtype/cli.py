@@ -8,12 +8,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .asr import (
-    default_model_dir,
-    ensure_model_download,
-    model_exists,
-    prepare_sherpa_onnx_runtime,
-)
+from .asr import default_model_dir, ensure_model_download, model_exists
 from .clipboard import describe_auto_paste_backend
 from .config import (
     load_config,
@@ -117,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     settings.add_argument("--model-dir")
 
     doctor = subparsers.add_parser("doctor", help="check the local setup")
-    doctor.add_argument("--fix", action="store_true", help="repair the onnxruntime symlink")
+    doctor.add_argument("--fix", action="store_true", help="kept for compatibility; no-op")
 
     subparsers.add_parser("install", help="install and start the systemd user service")
     subparsers.add_parser("uninstall", help="stop and remove the systemd user service")
@@ -240,7 +235,6 @@ def _setup(args) -> int:
         ensure_model_download(spec, model_dir, progress=sys.stdout.isatty())
 
     update_config(model_download_approved=True)
-    prepare_sherpa_onnx_runtime()
     settings = public_settings()
     if args.json:
         print(json.dumps(settings, sort_keys=True))
@@ -320,9 +314,6 @@ def run_doctor(fix: bool = False) -> int:
     settings = public_settings()
     checks: list[tuple[str, bool, str]] = []
 
-    if fix:
-        prepare_sherpa_onnx_runtime()
-
     in_input_group = _in_input_group()
     checks.append(("input group (evdev hotkeys)", in_input_group, "sudo usermod -aG input $USER, then log out/in"))
     checks.append(("wl-copy (clipboard)", shutil.which("wl-copy") is not None, "install wl-clipboard"))
@@ -331,7 +322,7 @@ def run_doctor(fix: bool = False) -> int:
     checks.append(("hyprctl (terminal-aware paste)", hypr, "auto paste falls back to a fixed mode"))
     checks.append(("audio player (pw-play)", any(shutil.which(c) for c in ("pw-play", "paplay", "ffplay", "aplay")), "install pipewire-audio or alsa-utils"))
     checks.append(("model files", settings["model_exists"], "run: airtype setup"))
-    checks.append(("onnxruntime symlink", _sherpa_import_ok(), "run: airtype doctor --fix"))
+    checks.append(("sherpa-onnx import", _sherpa_import_ok(), "reinstall: uv tool install --reinstall airtype"))
 
     socket_ok = socket_path().exists()
     checks.append(("service socket", socket_ok, "start with: systemctl --user start airtype"))

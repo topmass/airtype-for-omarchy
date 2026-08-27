@@ -6,11 +6,12 @@ requires-python = ">=3.12"
 dependencies = [
     "evdev>=1.7.1; sys_platform == 'linux'",
     "numpy>=1.26.0",
-    "onnxruntime==1.24.4",
     "platformdirs>=4.4.0",
     "pynput>=1.8.1",
     "pyperclip>=1.9.0",
-    "sherpa-onnx>=1.12.0,<2.0",
+    # 1.13.6+ wheels bundle libonnxruntime; older ones need a separate onnxruntime
+    # install plus a symlink hack we deliberately no longer carry.
+    "sherpa-onnx>=1.13.6,<2.0",
     "sounddevice>=0.5.2",
     "soundfile>=0.12.1",
 ]

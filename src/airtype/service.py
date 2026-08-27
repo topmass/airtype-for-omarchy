@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any, Callable
 
 from . import __version__
-from .asr import prepare_sherpa_onnx_runtime
 from .config import CONFIG_PATH, load_config
 from .hotkey import (
     HotkeyPolicy,
@@ -81,7 +80,6 @@ class AirtypeService:
     # -- main loop
 
     def run(self) -> int:
-        prepare_sherpa_onnx_runtime()
         self._ipc.start()
         self._start_listener()
         self._log(

@@ -4,7 +4,6 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
-from importlib.util import find_spec
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +59,6 @@ def load_model():
     spec = active_model_spec()
     model_dir = default_model_dir(spec)
     _ensure_model(spec, model_dir, progress=False)
-    prepare_sherpa_onnx_runtime()
 
     import sherpa_onnx
 
@@ -214,33 +212,3 @@ def _download_model_files_from_hf(spec: ModelSpec, model_dir: Path) -> None:
         urllib.request.urlretrieve(url, target)
 
 
-def prepare_sherpa_onnx_runtime() -> None:
-    """Symlink the venv's libonnxruntime into sherpa_onnx/lib so the binding loads.
-
-    The pip sherpa-onnx wheel expects a libonnxruntime.so next to its own libs;
-    reusing the onnxruntime wheel's copy avoids shipping a second runtime.
-    """
-    onnx_spec = find_spec("onnxruntime")
-    sherpa_spec = find_spec("sherpa_onnx")
-    if onnx_spec is None or sherpa_spec is None or not onnx_spec.origin:
-        return
-
-    onnx_lib_dir = Path(onnx_spec.origin).parent / "capi"
-    sherpa_dir = Path(sherpa_spec.origin).parent / "lib"
-    runtime_libs = sorted(onnx_lib_dir.glob("libonnxruntime.so.*"))
-    if not runtime_libs:
-        return
-
-    target = sherpa_dir / "libonnxruntime.so"
-    source = runtime_libs[-1]
-    if target.exists() or target.is_symlink():
-        try:
-            if target.resolve() == source.resolve():
-                return
-            target.unlink()
-        except OSError:
-            return
-    try:
-        target.symlink_to(source)
-    except OSError:
-        pass
