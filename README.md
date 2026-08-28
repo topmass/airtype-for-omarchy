@@ -1,148 +1,88 @@
-# Airtype
+# AirType for Omarchy
 
-Fast local speech-to-text for rambling into AI tools. Airtype records immediately, loads the ASR model in the background, transcribes pause-aware chunks while you keep talking, copies the result, optionally pastes it, and unloads the model by default.
+Fast local push-to-talk speech-to-text for [Omarchy](https://omarchy.org), with a theme-matched recording waveform and an Omarchy bar widget. Built for Omarchy / Hyprland, usable on any Wayland or X11 desktop.
 
-Airtype does not ship a model. On first run it downloads the sherpa-onnx Parakeet V2 INT8 English model into the user cache.
+Hold **Super** and double-tap **Alt** to start recording. Tap **Alt** once to stop. AirType transcribes locally, copies the text, and pastes it into the focused window. If the focused window is a terminal (foot, ghostty, alacritty, kitty, ...), it pastes with Ctrl+Shift+V; everywhere else it uses Ctrl+V.
 
-## Install
+While you talk, a small waveform pill floats above the bottom edge of the focused monitor, drawn in your active Omarchy theme's accent color. The bars follow your real microphone level and the pill fades out when you stop.
 
-Airtype is designed to be installable as an npm CLI after publishing:
+AirType records immediately and loads the ASR model in the background while you talk. It transcribes pause-aware chunks during the recording and unloads the model when done, so the idle service uses about 26 MB of RAM and ~0% CPU.
 
-```bash
-pnpm add -g airtype
-airtype
-```
+## Install the dictation service
 
-One-off runs also work:
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 
 ```bash
-pnpm dlx airtype
+uv tool install git+https://github.com/topmass/airtype-for-omarchy
+airtype setup      # downloads the model (~480 MB) on first run
+airtype install    # installs + starts the systemd user service
+airtype doctor     # verify everything is green
 ```
 
-The npm package exposes an `airtype` command through `package.json#bin`. The launcher uses `uv` for the Python speech engine and Bun for the OpenTUI front end.
-
-Before running Airtype, install:
-
-- `uv`: https://docs.astral.sh/uv/getting-started/installation/
-- `bun`: https://bun.com/docs/installation/
-- `ffmpeg`: optional, only needed when transcribing audio files that are not already readable as 16 kHz audio
-
-OpenTUI is currently Bun-exclusive, with Node support still in progress: https://opentui.com/docs/getting-started/
-
-## First Run
-
-Run:
+Requirements on Wayland: `wl-clipboard`, `wtype`, and your user in the `input` group (for global hotkeys via evdev):
 
 ```bash
-airtype
+sudo pacman -S wl-clipboard wtype
+sudo usermod -aG input $USER   # then log out and back in
 ```
 
-If the model is missing, Airtype prints the model name, approximate download size, and destination directory. Press `Enter` or `Y` to use the default cache location, paste a custom directory, or type `n` to cancel.
+The waveform overlay uses the system GTK4 stack (`gtk4-layer-shell`, `python-gobject`, `python-cairo`), all stock on Omarchy. Without them the overlay quietly stays off and dictation is unaffected.
 
-Default model cache locations are OS-native through `platformdirs`:
+## Install the bar widget (Omarchy plugin)
 
-- Linux: `~/.cache/airtype/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`
-- macOS: `~/Library/Caches/airtype/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`
-- Windows: `%LOCALAPPDATA%\airtype\Cache\models\sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`
-
-Check the exact path on any machine:
+This repo is also an Omarchy shell plugin: a microphone indicator for the bar that shows live state (idle, recording, transcribing) and toggles recording on click.
 
 ```bash
-airtype settings --json
+omarchy plugin add https://github.com/topmass/airtype-for-omarchy.git
+omarchy plugin enable topmass.airtype
 ```
 
-The model download tries the sherpa-onnx GitHub release archive first, then falls back to Hugging Face:
-
-- `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2`
-- `https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`
+The indicator sits dim while idle, pulses in your theme's active color while recording, and shows an hourglass while transcribing. If the AirType service is not running it shows a muted mic-off glyph. A widget setting (`Show icon when idle`) lets you hide it entirely except during dictation.
 
 ## Usage
 
-Launch the TUI:
+- `airtype` - settings menu (gum-based): model swap/download/delete, paste mode, hotkey, terminal classes, sounds, waveform overlay
+- `airtype toggle` / `airtype status` - control the running service
+- `airtype record` - one-shot dictation in a terminal (Enter to stop)
+- `airtype transcribe file.wav` - transcribe an audio file
+- `airtype models` - list available models
+- `airtype settings --json` - scriptable settings
+- `airtype doctor` - health checks
 
-```bash
-airtype
-```
+Config lives at `~/.config/airtype/config.json` and hot-reloads into the running service. `overlay_enabled` turns the waveform overlay on or off.
 
-Controls:
+## Models
 
-- `Enter` or `Space`: start or stop recording
-- Double-tap the configured global hotkey: start or stop recording from anywhere
-- `p`: cycle paste mode
-- `h`: cycle hotkey
-- `q`: quit
+All models run on CPU via sherpa-onnx int8 ONNX:
 
-Paste modes:
+| Key | Model | Notes |
+|---|---|---|
+| `parakeet-unified-en-0.6b-int8` (default) | NVIDIA Parakeet Unified EN 0.6B | English, punctuation + capitalization |
+| `parakeet-tdt-0.6b-v3-int8` | Parakeet TDT v3 | 25 European languages |
+| `parakeet-tdt-0.6b-v2-int8` | Parakeet TDT v2 | legacy, no punctuation |
+| `moonshine-base-en` | Moonshine Base EN | 145 MB light tier for weak hardware |
 
-- `Ctrl+Shift+V`
-- `Ctrl+V`
-- `Command+V`
-- `Command+Shift+V`
-- `Copy only`
+Models download on demand from the sherpa-onnx release page into `~/.cache/airtype/models/`.
 
-CLI modes:
+## How the hotkey works
 
-```bash
-airtype record
-airtype record --paste ctrl-v
-airtype record --paste copy-only
-airtype transcribe ./audio.wav --no-copy
-airtype service
-airtype doctor
-```
+The service reads `/dev/input` key events directly (evdev), below the compositor, so hotkeys work in any app including fullscreen windows and nothing is grabbed - your keys still reach applications normally. The state machine ignores chords like Alt+Tab while recording, tolerates releasing Super slightly before the second Alt tap, and waits for your modifiers to be released before sending the paste keystroke.
 
-Airtype unloads the model after each transcription by default. For short bursts, keep it warm:
+## How the waveform overlay works
 
-```bash
-airtype record --unload-timeout 300
-```
-
-## Paste Setup
-
-Clipboard copy and auto-paste are OS-specific.
-
-Linux Wayland:
-
-```bash
-# Fedora/RHEL
-sudo dnf install wl-clipboard ydotool wtype xclip xdotool
-
-# Arch
-sudo pacman -S wl-clipboard ydotool wtype xclip xdotool
-
-# Debian/Ubuntu
-sudo apt install wl-clipboard ydotool wtype xclip xdotool
-```
-
-Wayland auto-paste prefers `wtype` when it works and falls back to `ydotool`. KDE Wayland usually needs `ydotool`. `ydotoold` must be running and its socket must be readable by your user.
-
-Linux X11 uses `xclip` or `xsel` for copy and `xdotool` for paste.
-
-macOS uses `pbcopy` for copy and `pynput` for paste. Grant Accessibility permission to the terminal app that runs Airtype.
-
-Windows uses `clip` for copy and `pynput` for paste. No extra paste package is usually required.
-
-Run:
-
-```bash
-airtype doctor
-```
-
-to see the active OS, model path, paste mode, and detected paste backend.
+The overlay is a GTK4 + gtk4-layer-shell window spawned per recording under the system python3 (it cannot live in the tool's venv). The recording pipeline streams microphone RMS levels to it over a pipe. Colors are read at spawn from `~/.local/state/omarchy/current/theme/colors.toml`, so the overlay always matches the active theme with zero configuration. The pill is click-through and never takes keyboard focus. On non-Omarchy systems it falls back to neutral colors.
 
 ## Development
 
 ```bash
-uv run python -m unittest discover -s tests -v
-pnpm audit --prod
-bun src/tui/airtype-tui.ts
+git clone https://github.com/topmass/airtype-for-omarchy
+cd airtype-for-omarchy
+uv sync
+uv run python -m unittest discover tests
 ```
 
-Package dry run:
+The Python service lives in `src/airtype/`, the bar widget in `shell/BarWidget.qml`, and the plugin manifest at `manifest.json`. See `project-specsheet.md` for the architecture map and the rules that keep everything working.
 
-```bash
-pnpm pack --dry-run
-```
+## License
 
-Airtype sets `UV_PROJECT_ENVIRONMENT` to a user-cache venv when launched through the npm bin. That keeps the Python environment writable even when the npm package is installed globally.
-
+MIT

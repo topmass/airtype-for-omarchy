@@ -1,56 +1,71 @@
 import argparse
+import grp
 import json
 import os
 import platform
+import shutil
 import sys
 from pathlib import Path
 
-from .asr import DEFAULT_MODEL, default_model_dir, ensure_model_download, model_exists
+from . import __version__
+from .asr import default_model_dir, ensure_model_download, model_exists
 from .clipboard import describe_auto_paste_backend
 from .config import (
-    MODEL_SIZE_LABEL,
-    PASTE_MODE_LABELS,
-    cycle_hotkey,
-    cycle_paste_mode,
     load_config,
     normalize_paste_mode,
     public_settings,
-    resolve_custom_model_dir,
-    save_config,
+    resolve_custom_model_base,
     update_config,
 )
-from .hotkey import format_hotkey, parse_hotkey_keys
+from .ipc import ServiceNotRunningError, request, socket_path
 from .pipeline import AirtypePipeline
+from .registry import MODEL_REGISTRY, get_model_spec
 from .service import AirtypeService
+from .terminal import active_window_class
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
-        argv = ["record"]
+        from .menu import run_menu
+
+        return run_menu()
 
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command
 
     try:
-        if command == "doctor":
-            return _doctor(args)
-        if command == "transcribe":
-            return _transcribe(args)
+        if command == "service":
+            return _service(args)
+        if command == "toggle":
+            return _toggle(args)
+        if command == "status":
+            return _status(args)
         if command == "record":
             if not _ensure_model_ready(interactive=sys.stdin.isatty()):
                 return 1
             return _record(args)
-        if command == "service":
-            return _service(args)
+        if command == "transcribe":
+            return _transcribe(args)
         if command == "setup":
             return _setup(args)
+        if command == "models":
+            return _models(args)
         if command == "settings":
             return _settings(args)
+        if command == "doctor":
+            return run_doctor(fix=args.fix)
+        if command == "install":
+            return _install(args)
+        if command == "uninstall":
+            return _uninstall(args)
     except KeyboardInterrupt:
         print("\nInterrupted", file=sys.stderr)
         return 130
+    except ServiceNotRunningError as exc:
+        print(f"airtype: {exc}", file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"airtype: {exc}", file=sys.stderr)
         return 1
@@ -60,42 +75,54 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="airtype")
+    parser = argparse.ArgumentParser(
+        prog="airtype",
+        description="Local push-to-talk dictation. Run with no arguments for the settings menu.",
+    )
+    parser.add_argument("--version", action="version", version=f"airtype {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
-    record = subparsers.add_parser("record", help="record microphone audio until Enter")
-    _add_output_options(record)
+    subparsers.add_parser("service", help="run the always-on dictation service (systemd ExecStart)")
+    subparsers.add_parser("toggle", help="start/stop recording in the running service")
 
-    service = subparsers.add_parser("service", help="run the hotkey backend")
-    _add_output_options(service)
-    service.add_argument("--hotkey", help="double-tap key or combo")
+    status = subparsers.add_parser("status", help="show the running service status")
+    status.add_argument("--json", action="store_true")
+
+    record = subparsers.add_parser("record", help="one-shot: record until Enter, then paste")
+    _add_output_options(record)
 
     transcribe = subparsers.add_parser("transcribe", help="transcribe an audio file")
     transcribe.add_argument("path", type=Path)
     _add_output_options(transcribe)
 
-    setup = subparsers.add_parser("setup", help="prepare the local model cache")
+    setup = subparsers.add_parser("setup", help="download the active (or given) model")
+    setup.add_argument("--model", choices=tuple(MODEL_REGISTRY), help="model to download and activate")
     setup.add_argument("--yes", action="store_true", help="download without prompting")
-    setup.add_argument("--model-dir", help="custom model directory or parent directory")
+    setup.add_argument("--model-dir", help="parent directory that stores model folders")
     setup.add_argument("--json", action="store_true", help="print machine-readable status")
 
-    settings = subparsers.add_parser("settings", help="show or update Airtype settings")
-    settings.add_argument("--json", action="store_true")
-    paste_choices = tuple(PASTE_MODE_LABELS) + tuple(mode.replace("_", "-") for mode in PASTE_MODE_LABELS)
-    settings.add_argument("--paste-mode", choices=paste_choices)
-    settings.add_argument("--hotkey")
-    settings.add_argument("--model-dir")
-    settings.add_argument("--cycle-paste", action="store_true")
-    settings.add_argument("--cycle-hotkey", action="store_true")
+    subparsers.add_parser("models", help="list available models")
 
-    subparsers.add_parser("doctor", help="show local backend status")
+    settings = subparsers.add_parser("settings", help="show or change settings non-interactively")
+    settings.add_argument("--json", action="store_true")
+    settings.add_argument("--paste-mode")
+    settings.add_argument("--start-hotkey")
+    settings.add_argument("--stop-key")
+    settings.add_argument("--model", choices=tuple(MODEL_REGISTRY))
+    settings.add_argument("--model-dir")
+
+    doctor = subparsers.add_parser("doctor", help="check the local setup")
+    doctor.add_argument("--fix", action="store_true", help="kept for compatibility; no-op")
+
+    subparsers.add_parser("install", help="install and start the systemd user service")
+    subparsers.add_parser("uninstall", help="stop and remove the systemd user service")
     return parser
 
 
 def _add_output_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--paste",
-        choices=("copy-only", "ctrl-v", "ctrl-shift-v", "cmd-v", "cmd-shift-v"),
+        choices=("auto", "copy-only", "ctrl-v", "ctrl-shift-v", "cmd-v", "cmd-shift-v"),
         help="paste after copying",
     )
     parser.add_argument(
@@ -116,7 +143,46 @@ def _pipeline(args) -> AirtypePipeline:
         paste_mode=paste_mode,
         copy=not args.no_copy,
         unload_timeout_seconds=unload_timeout,
+        paste_fallback=config["paste_fallback"],
+        terminal_classes=config["terminal_classes"],
+        sounds_enabled=config["sounds_enabled"],
     )
+
+
+def _service(args) -> int:
+    return AirtypeService().run()
+
+
+def _toggle(args) -> int:
+    response = request("toggle")
+    if not response.get("ok"):
+        print(f"airtype: {response.get('error')}", file=sys.stderr)
+        return 1
+    print(response["result"]["state"])
+    return 0
+
+
+def _status(args) -> int:
+    response = request("status")
+    if not response.get("ok"):
+        print(f"airtype: {response.get('error')}", file=sys.stderr)
+        return 1
+    status = response["result"]
+    if args.json:
+        print(json.dumps(status, sort_keys=True))
+        return 0
+    for key in (
+        "state",
+        "model",
+        "model_loaded",
+        "listener",
+        "hotkey",
+        "paste_mode",
+        "uptime_seconds",
+        "pid",
+    ):
+        print(f"{key}: {status.get(key)}")
+    return 0
 
 
 def _record(args) -> int:
@@ -140,122 +206,162 @@ def _transcribe(args) -> int:
     return 0 if result.text else 1
 
 
-def _service(args) -> int:
-    config = load_config()
-    paste_mode = normalize_paste_mode(args.paste or config["paste_mode"])
-    hotkey = args.hotkey or config["hotkey"]
-    unload_timeout = 0 if args.unload_timeout is None else max(0, args.unload_timeout)
-    service = AirtypeService(
-        paste_mode=paste_mode,
-        unload_timeout_seconds=unload_timeout,
-        hotkey=hotkey,
-        copy=not args.no_copy,
-    )
-    return service.run()
-
-
 def _setup(args) -> int:
-    requested_model_dir = resolve_custom_model_dir(args.model_dir, DEFAULT_MODEL) if args.model_dir else None
-    active_model_dir = requested_model_dir or default_model_dir()
-    if model_exists(active_model_dir):
-        if requested_model_dir is not None:
-            update_config(model_dir=str(requested_model_dir), model_download_approved=True)
-        settings = public_settings(DEFAULT_MODEL)
-        if args.json:
-            print(json.dumps(settings, sort_keys=True))
-        else:
-            print(f"Airtype model is ready: {settings['model_dir']}")
-        return 0
+    changes = {}
+    if args.model:
+        changes["model"] = args.model
+    if args.model_dir:
+        changes["model_dir"] = str(resolve_custom_model_base(args.model_dir))
+    if changes:
+        update_config(**changes)
 
-    model_dir = requested_model_dir or _select_model_dir(args)
-    if model_dir is None:
-        return 1
+    spec = get_model_spec(load_config()["model"])
+    model_dir = default_model_dir(spec)
+    if not model_exists(spec, model_dir):
+        if not args.yes and sys.stdin.isatty():
+            print(f"Model: {spec.dir_name}")
+            print(f"Size: {spec.size_label}")
+            print(f"Destination: {model_dir}")
+            answer = input("Press Enter/Y to download, or n to cancel: ").strip().lower()
+            if answer in {"n", "no", "q", "quit", "cancel"}:
+                print("Model download cancelled.")
+                return 1
+        elif not args.yes:
+            print(
+                "Airtype model is missing. Run `airtype setup` in a terminal or use `airtype setup --yes`.",
+                file=sys.stderr,
+            )
+            return 1
+        ensure_model_download(spec, model_dir, progress=sys.stdout.isatty())
 
-    config = load_config()
-    config["model_dir"] = str(model_dir)
-    config["model_download_approved"] = True
-    save_config(config)
-
-    if not args.json:
-        print(f"Downloading {DEFAULT_MODEL} to:")
-        print(f"  {model_dir}")
-    ensure_model_download(model_dir)
-    settings = public_settings(DEFAULT_MODEL)
+    update_config(model_download_approved=True)
+    settings = public_settings()
     if args.json:
         print(json.dumps(settings, sort_keys=True))
     else:
-        print("Airtype model is ready.")
+        print(f"Airtype model is ready: {settings['model_dir']}")
+    return 0
+
+
+def _models(args) -> int:
+    config = load_config()
+    for spec in MODEL_REGISTRY.values():
+        from .config import configured_model_dir
+
+        markers = []
+        if spec.name == config["model"]:
+            markers.append("active")
+        if model_exists(spec, configured_model_dir(spec.dir_name)):
+            markers.append("downloaded")
+        marker = f" [{', '.join(markers)}]" if markers else ""
+        print(f"{spec.name}{marker}")
+        print(f"    {spec.display} | {spec.langs} | {spec.size_label}")
     return 0
 
 
 def _settings(args) -> int:
-    config = load_config()
+    changes = {}
     if args.paste_mode:
-        config["paste_mode"] = normalize_paste_mode(args.paste_mode)
-    if args.hotkey:
-        config["hotkey"] = args.hotkey
+        changes["paste_mode"] = args.paste_mode
+    if args.start_hotkey:
+        changes["start_hotkey"] = args.start_hotkey
+    if args.stop_key:
+        changes["stop_key"] = args.stop_key
+    if args.model:
+        changes["model"] = args.model
     if args.model_dir:
-        config["model_dir"] = str(resolve_custom_model_dir(args.model_dir, DEFAULT_MODEL))
-    if args.cycle_paste:
-        config = cycle_paste_mode()
-    elif args.cycle_hotkey:
-        config = cycle_hotkey()
-    elif args.paste_mode or args.hotkey or args.model_dir:
-        update_config(**config)
-    settings = public_settings(DEFAULT_MODEL)
+        changes["model_dir"] = str(resolve_custom_model_base(args.model_dir))
+    if changes:
+        update_config(**changes)
+        try:
+            request("reload-config")
+        except ServiceNotRunningError:
+            pass
+
+    settings = public_settings()
     if args.json:
         print(json.dumps(settings, sort_keys=True))
     else:
         print(f"Config: {settings['config_path']}")
-        print(f"Model: {settings['model_dir']}")
-        print(f"Paste mode: {settings['paste_label']}")
-        print(f"Hotkey: {format_hotkey(parse_hotkey_keys(settings['hotkey']))}")
+        print(f"Model: {settings['model']} ({settings['model_display']})")
+        print(f"Model dir: {settings['model_dir']} (ready: {'yes' if settings['model_exists'] else 'no'})")
+        print(f"Paste mode: {settings['paste_label']} (fallback: {settings['paste_fallback']})")
+        print(f"Hotkey: hold+double-tap {settings['start_hotkey']}, stop with {settings['stop_key']}")
+        print(f"Sounds: {'on' if settings['sounds_enabled'] else 'off'}")
     return 0
 
 
-def _doctor(args) -> int:
-    settings = public_settings(DEFAULT_MODEL)
-    os_info = _os_info()
-    print(f"OS: {os_info}")
-    print(f"Session: {(os.environ.get('XDG_SESSION_TYPE') or 'n/a')}")
+def _install(args) -> int:
+    from .systemd import install_service
+
+    unit_path = install_service()
+    print(f"Installed and started: {unit_path}")
+    print("Check it with: systemctl --user status airtype")
+    return 0
+
+
+def _uninstall(args) -> int:
+    from .systemd import uninstall_service
+
+    uninstall_service()
+    print("airtype systemd user service removed.")
+    return 0
+
+
+def run_doctor(fix: bool = False) -> int:
+    from .systemd import UNIT_PATH, service_state
+
+    settings = public_settings()
+    checks: list[tuple[str, bool, str]] = []
+
+    in_input_group = _in_input_group()
+    checks.append(("input group (evdev hotkeys)", in_input_group, "sudo usermod -aG input $USER, then log out/in"))
+    checks.append(("wl-copy (clipboard)", shutil.which("wl-copy") is not None, "install wl-clipboard"))
+    checks.append(("wtype (paste keystroke)", shutil.which("wtype") is not None, "install wtype"))
+    hypr = shutil.which("hyprctl") is not None
+    checks.append(("hyprctl (terminal-aware paste)", hypr, "auto paste falls back to a fixed mode"))
+    checks.append(("audio player (pw-play)", any(shutil.which(c) for c in ("pw-play", "paplay", "ffplay", "aplay")), "install pipewire-audio or alsa-utils"))
+    checks.append(("model files", settings["model_exists"], "run: airtype setup"))
+    checks.append(("sherpa-onnx import", _sherpa_import_ok(), "reinstall: uv tool install --reinstall airtype"))
+
+    socket_ok = socket_path().exists()
+    checks.append(("service socket", socket_ok, "start with: systemctl --user start airtype"))
+    unit_installed = UNIT_PATH.exists()
+    checks.append(("systemd unit", unit_installed, "run: airtype install"))
+
+    print(f"airtype {__version__} on {_os_info()} ({os.environ.get('XDG_SESSION_TYPE') or 'n/a'})")
     print(f"Config: {settings['config_path']}")
-    print(f"Model dir: {settings['model_dir']}")
-    print(f"Model ready: {'yes' if settings['model_exists'] else 'no'}")
-    print(f"Paste mode: {settings['paste_label']}")
-    print(f"Paste backend: {describe_auto_paste_backend(settings['paste_mode'])}")
-    print(_install_hint())
-    return 0
-
-
-def _select_model_dir(args) -> Path | None:
-    if args.model_dir:
-        return resolve_custom_model_dir(args.model_dir, DEFAULT_MODEL)
-
-    default_dir = default_model_dir()
-    if args.yes or not sys.stdin.isatty():
-        if args.yes:
-            return default_dir
-        print(
-            "Airtype model is missing. Run `airtype setup` in an interactive terminal.",
-            file=sys.stderr,
-        )
-        return None
-
-    print("First Airtype run")
+    print(f"Model: {settings['model']} at {settings['model_dir']}")
+    print(f"Paste: {settings['paste_label']} | backend: {describe_auto_paste_backend(settings['paste_fallback'])}")
+    if hypr:
+        print(f"Focused window class: {active_window_class() or 'n/a'}")
+    if unit_installed:
+        print(f"Systemd unit: {UNIT_PATH} ({service_state()})")
     print()
-    print("Airtype needs to download the local voice model before transcription works.")
-    print(f"Model: {DEFAULT_MODEL}")
-    print(f"Size: {MODEL_SIZE_LABEL}")
-    print("Default location:")
-    print(f"  {default_dir}")
-    print()
-    answer = input("Press Enter/Y to download here, paste a different directory, or type n to cancel: ").strip()
-    if answer.lower() in {"n", "no", "q", "quit", "cancel"}:
-        print("Model download cancelled.")
-        return None
-    if answer == "" or answer.lower() in {"y", "yes"}:
-        return default_dir
-    return resolve_custom_model_dir(answer, DEFAULT_MODEL)
+    failed = 0
+    for label, ok, hint in checks:
+        mark = "ok " if ok else "FAIL"
+        suffix = "" if ok else f"  -> {hint}"
+        if not ok:
+            failed += 1
+        print(f"[{mark}] {label}{suffix}")
+    return 0 if failed == 0 else 1
+
+
+def _in_input_group() -> bool:
+    try:
+        return any(g.gr_name == "input" for g in map(grp.getgrgid, os.getgroups()))
+    except (KeyError, OSError):
+        return False
+
+
+def _sherpa_import_ok() -> bool:
+    try:
+        import sherpa_onnx  # noqa: F401
+
+        return True
+    except Exception:
+        return False
 
 
 def _ensure_model_ready(interactive: bool) -> bool:
@@ -263,11 +369,11 @@ def _ensure_model_ready(interactive: bool) -> bool:
         return True
     if not interactive:
         print(
-            "Airtype model is missing. Run `airtype setup` in an interactive terminal or use `airtype setup --yes`.",
+            "Airtype model is missing. Run `airtype setup` in a terminal or use `airtype setup --yes`.",
             file=sys.stderr,
         )
         return False
-    args = argparse.Namespace(yes=False, model_dir=None, json=False)
+    args = argparse.Namespace(yes=False, model=None, model_dir=None, json=False)
     return _setup(args) == 0
 
 
@@ -283,29 +389,6 @@ def _os_info() -> str:
                     data[key] = value.strip('"')
             return data.get("PRETTY_NAME") or data.get("NAME") or system
     return f"{system} {platform.release()}".strip()
-
-
-def _install_hint() -> str:
-    system = platform.system()
-    if system == "Darwin":
-        return "macOS: grant Accessibility permission for global hotkeys and auto-paste."
-    if system == "Windows":
-        return "Windows: global hotkeys and paste use pynput; no extra paste package is usually required."
-
-    os_id = ""
-    os_release = Path("/etc/os-release")
-    if os_release.exists():
-        for line in os_release.read_text(errors="ignore").splitlines():
-            if line.startswith("ID="):
-                os_id = line.split("=", 1)[1].strip().strip('"')
-                break
-    if os_id in {"fedora", "rhel", "centos"}:
-        return "Fedora/RHEL: sudo dnf install wl-clipboard ydotool wtype xclip xdotool"
-    if os_id in {"arch", "manjaro"}:
-        return "Arch: sudo pacman -S wl-clipboard ydotool wtype xclip xdotool"
-    if os_id in {"debian", "ubuntu", "linuxmint", "pop"}:
-        return "Debian/Ubuntu: sudo apt install wl-clipboard ydotool wtype xclip xdotool"
-    return "Linux: install wl-clipboard plus ydotool or wtype for Wayland, xclip/xdotool for X11."
 
 
 def _print_result(result, quiet: bool) -> None:

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "topmass.airtype",
+  "name": "AirType",
+  "version": "2.1.0",
+  "author": "topmass",
+  "license": "MIT",
+  "description": "Bar indicator for the AirType push-to-talk dictation service: live ready/recording/transcribing state, click to toggle recording.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "shell/BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "AirType dictation",
+    "description": "Shows the AirType dictation state; click toggles recording.",
+    "category": "Input",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showWhenIdle": true
+    },
+    "schema": [
+      {
+        "key": "showWhenIdle",
+        "type": "boolean",
+        "label": "Show icon when idle",
+        "defaultValue": true
+      }
+    ]
+  }
+}
