@@ -134,6 +134,14 @@ class IPCServer:
                     with self._lock:
                         self._subscribers.add(conn)
                     self._send(conn, {"ok": True, "result": "subscribed"})
+                    # A new subscriber (e.g. the bar widget) needs the current
+                    # state without waiting for the next transition.
+                    def send_initial_state(result: dict[str, Any]) -> None:
+                        state = result.get("result", {}).get("state", "")
+                        if state:
+                            self._send(conn, {"event": "state", "state": state})
+
+                    self._submit({"cmd": "status"}, send_initial_state)
                     return  # connection stays open for broadcasts only
 
                 if command not in KNOWN_COMMANDS:

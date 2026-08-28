@@ -90,5 +90,25 @@ class IPCTests(unittest.TestCase):
         self.assertEqual(events[0]["state"], "recording")
 
 
+    def test_subscriber_receives_initial_state(self) -> None:
+        def handler(command, reply):
+            reply({"ok": True, "result": {"state": "ready"}})
+
+        self._start_server(handler)
+        received = []
+        done = threading.Event()
+
+        def listen():
+            for event in ipc.subscribe_events(timeout=5.0):
+                if event.get("event") == "state":
+                    received.append(event)
+                    done.set()
+                    return
+
+        threading.Thread(target=listen, daemon=True).start()
+        self.assertTrue(done.wait(3.0))
+        self.assertEqual(received[0]["state"], "ready")
+
+
 if __name__ == "__main__":
     unittest.main()
