@@ -1,6 +1,6 @@
 [project]
 name = "airtype"
-version = "2.0.0"
+version = "2.1.0"
 description = "Fast local push-to-talk speech-to-text that gets out of memory when idle"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,9 +9,13 @@ dependencies = [
     "platformdirs>=4.4.0",
     "pynput>=1.8.1",
     "pyperclip>=1.9.0",
-    # 1.13.6+ wheels bundle libonnxruntime; older ones need a separate onnxruntime
-    # install plus a symlink hack we deliberately no longer carry.
+    # sherpa-onnx's native libs (libonnxruntime.so etc.) live in the separate
+    # sherpa-onnx-core package. sherpa-onnx declares that dependency only in its
+    # per-platform wheel metadata (marked Dynamic), which uv's lockfile resolver
+    # never sees - so without this explicit entry `uv sync` builds a venv whose
+    # sherpa import fails with "libonnxruntime.so: cannot open shared object".
     "sherpa-onnx>=1.13.6,<2.0",
+    "sherpa-onnx-core>=1.13.6,<2.0; sys_platform == 'linux'",
     "sounddevice>=0.5.2",
     "soundfile>=0.12.1",
 ]

@@ -32,10 +32,19 @@ All source in `src/airtype/`:
 - `systemd.py` - renders/installs `~/.config/systemd/user/airtype.service` (WantedBy graphical-session.target, ExecStart is the resolved airtype path).
 - `sounds.py` - start/stop mp3s from package data (`airtype/assets/`) via pw-play/paplay/ffplay/aplay.
 
+## Omarchy bar-widget plugin
+
+The repo doubles as an Omarchy shell plugin: `manifest.json` at the root (id `topmass.airtype`, kind `bar-widget`, schemaVersion 1) plus `shell/BarWidget.qml`. Users install it with `omarchy plugin add <repo-url>` + `omarchy plugin enable topmass.airtype`; the whole repo is cloned into `~/.config/omarchy/plugins/topmass.airtype/` (the Python source rides along harmlessly - the shell only loads the manifest's entry point).
+
+- `shell/BarWidget.qml` - `BarWidget` root + `WidgetButton`; a `Quickshell.Io` `Socket` subscribes to the airtype control socket and drives `serviceState`. Idle = dimmed mic, recording = active-color mic with a breathing opacity pulse ON THE ROOT item (animating the button's own opacity would break its dim/conceal binding), transcribing = hourglass, service down = mic-off glyph with a 3s reconnect timer. Click runs `airtype toggle` via `bar.run` (bash -lc, so `~/.local/bin` is on PATH).
+- The service pushes the current state to every NEW subscriber right after the subscribe ack (`ipc.py`); without that the widget shows offline until the first state transition.
+- Validate with `omarchy plugin validate <clean-clone>` - it rejects symlinks anywhere in the folder, so validate a clone, not the working tree (`.venv` has symlinks).
+- Live-develop by cloning the repo into `~/.config/omarchy/plugins/topmass.airtype`; saves hot-reload, `omarchy-shell shell rescanPlugins` forces a rescan. QML errors: `journalctl --user -t omarchy-shell`.
+- Keep `manifest.json` version in lockstep with pyproject.
+
 ## Rules that keep this working
 
-1. **The sherpa-onnx 1.13.6 manylinux wheel does NOT ship `libonnxruntime.so`** (verified 2026-08-28: its RECORD lists only `_sherpa_onnx*.so`; auditwheel vendored only libasound). The working install has real (non-symlink) `libonnxruntime.so`, `libsherpa-onnx-c-api.so`, `libsherpa-onnx-cxx-api.so` manually placed in `<venv>/site-packages/sherpa_onnx/lib/`. **`uv tool install --reinstall` wipes them - back them up first and copy them back after** (deploy recipe below). Never symlink the SYSTEM onnxruntime there instead; that breaks the import with `VERS_x not found`. Never add an onnxruntime pip dependency.
-1b. **Deploy recipe:** `cp` the three libs from `~/.local/share/uv/tools/airtype/lib/python3.12/site-packages/sherpa_onnx/lib/` to a temp dir → `uv tool install --reinstall .` → `cp` them back → `systemctl --user restart airtype`. Same fix applies to a fresh dev venv (`uv sync` produces a broken sherpa import until the libs are copied in).
+1. **sherpa-onnx's native libs come from the separate `sherpa-onnx-core` package** (root-caused 2026-08-28). The sherpa-onnx wheel ships only `_sherpa_onnx*.so`; `libonnxruntime.so` + the c-api libs are owned by `sherpa-onnx-core`, which sherpa-onnx declares only in per-platform wheel metadata marked Dynamic - uv's lockfile resolver never sees it. That is why `pyproject.toml` lists `sherpa-onnx-core` explicitly; **do not remove it**, or `uv sync` venvs fail with `libonnxruntime.so: cannot open shared object file`. Plain `uv tool install --reinstall .` deploys cleanly - no lib backup/copy needed. Never symlink the SYSTEM onnxruntime into `sherpa_onnx/lib/` (`VERS_x not found`) and never add an onnxruntime pip dependency.
 2. **Listener threads must never take the service lock.** `_on_key` only feeds `HotkeyPolicy` (under `_policy_lock`) and enqueues `_hotkey_start`/`_hotkey_stop` for the main loop. If key handling ever blocks on transcription, the modifier-release wait before paste deadlocks.
 3. **The evdev listener reports all keys, not just hotkeys** - dirty-tap chord detection depends on it. Device selection still keys on the hotkey codes.
 4. **Paste-mode "auto" resolves at paste time**, not at config time, so it follows the focused window.
@@ -51,7 +60,7 @@ All source in `src/airtype/`:
 - 57 unit tests green
 - Overlay pill appears bottom-center of the focused monitor while recording, bars follow live speech (user-confirmed transcript "the bars are moving" while bars visibly tracked speech and pauses), fades out at stop, layer gone afterward, click-through
 - Colors matched active Tokyo Night theme (#7aa2f7 bars on #13141c pill) read from Omarchy state
-- Deployed with the sherpa lib backup/restore recipe; installed service ready with paste auto
+- Deployed with plain `uv tool install --reinstall .`; installed service ready with paste auto
 
 ## Verified on 2026-08-27 (Omarchy, Dell XPS 16, Wayland/Hyprland)
 
