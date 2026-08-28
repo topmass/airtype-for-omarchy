@@ -2,6 +2,8 @@
 
 Fast local push-to-talk speech-to-text for [Omarchy](https://omarchy.org), with a theme-matched recording waveform and an Omarchy bar widget. Built for Omarchy / Hyprland, usable on any Wayland or X11 desktop.
 
+![AirType waveform overlay and bar widget](docs/preview.png)
+
 Hold **Super** and double-tap **Alt** to start recording. Tap **Alt** once to stop. AirType transcribes locally, copies the text, and pastes it into the focused window. If the focused window is a terminal (foot, ghostty, alacritty, kitty, ...), it pastes with Ctrl+Shift+V; everywhere else it uses Ctrl+V.
 
 While you talk, a small waveform pill floats above the bottom edge of the focused monitor, drawn in your active Omarchy theme's accent color. The bars follow your real microphone level and the pill fades out when you stop.
