@@ -106,6 +106,7 @@ def run_menu() -> int:
                 "Hotkey",
                 "Terminal classes",
                 "Sounds",
+                "Waveform overlay",
                 "Restart service",
                 "Doctor",
                 "Quit",
@@ -125,6 +126,8 @@ def run_menu() -> int:
             _menu_terminal_classes()
         elif choice == "Sounds":
             _menu_sounds()
+        elif choice == "Waveform overlay":
+            _menu_overlay()
         elif choice == "Restart service":
             print("restarted" if restart_service() else "restart failed (is it installed?)")
         elif choice == "Doctor":
@@ -265,3 +268,11 @@ def _menu_sounds() -> None:
     update_config(sounds_enabled=enabled)
     _notify_service_reload()
     print(f"Sounds: {'on' if enabled else 'off'}")
+
+
+def _menu_overlay() -> None:
+    config = load_config()
+    enabled = not config["overlay_enabled"]
+    update_config(overlay_enabled=enabled)
+    _notify_service_reload()
+    print(f"Waveform overlay: {'on' if enabled else 'off'}")

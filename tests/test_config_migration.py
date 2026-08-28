@@ -35,6 +35,11 @@ class ConfigMigrationTests(unittest.TestCase):
         self.assertEqual(migrated["start_hotkey"], "ctrl+alt")
         self.assertEqual(migrated["stop_key"], "alt")
 
+    def test_overlay_enabled_defaults_on_and_survives_migration(self) -> None:
+        self.assertTrue(migrate_config({})["overlay_enabled"])
+        migrated = migrate_config({"version": CONFIG_VERSION, "overlay_enabled": False})
+        self.assertFalse(migrated["overlay_enabled"])
+
     def test_fresh_and_partial_inputs(self) -> None:
         self.assertEqual(migrate_config({}), default_config() | {"version": CONFIG_VERSION})
         self.assertEqual(migrate_config(None), default_config())

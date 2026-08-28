@@ -18,6 +18,7 @@ from .hotkey import (
 )
 from .ipc import IPCServer
 from .model_manager import release_freed_memory
+from .overlay import WaveformOverlay
 from .pipeline import AirtypePipeline
 
 LISTENER_HEALTH_INTERVAL = 2.0
@@ -31,6 +32,7 @@ class AirtypeService:
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or load_config()
+        self._overlay = WaveformOverlay(log=self._log, debug=DEBUG)
         self.pipeline = self._build_pipeline(self.config)
         self.policy = self._build_policy(self.config)
         self._state = "ready"
@@ -60,6 +62,7 @@ class AirtypeService:
             terminal_classes=config["terminal_classes"],
             sounds_enabled=config["sounds_enabled"],
             pre_paste=self._wait_for_modifier_release,
+            on_level=self._overlay.feed,
         )
 
     def _build_policy(self, config: dict[str, Any]) -> HotkeyPolicy:
@@ -318,6 +321,8 @@ class AirtypeService:
     # -- recording
 
     def _start_recording(self) -> None:
+        if self.config.get("overlay_enabled", True):
+            self._overlay.start()
         self._session = self.pipeline.start_recording()
         self._state = "recording"
         with self._policy_lock:
@@ -330,6 +335,7 @@ class AirtypeService:
         if session is None:
             return
         self._session = None
+        self._overlay.stop()
         self._state = "transcribing"
         with self._policy_lock:
             self.policy.set_recording(False, time.time())

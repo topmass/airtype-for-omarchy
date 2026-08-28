@@ -43,6 +43,7 @@ class AirtypePipeline:
         terminal_classes: list[str] | None = None,
         sounds_enabled: bool = True,
         pre_paste: "callable | None" = None,
+        on_level: "callable | None" = None,
     ) -> None:
         self.manager = manager or ModelManager()
         self.paste_mode = normalize_paste_mode(paste_mode)
@@ -56,6 +57,8 @@ class AirtypePipeline:
         # Hook run just before the synthetic paste keystroke; the service uses it
         # to wait until physically held hotkey modifiers are released.
         self.pre_paste = pre_paste
+        # Called with the RMS of each mic block while recording (waveform overlay).
+        self.on_level = on_level
 
     def transcribe_path(self, path: Path | str) -> TranscriptResult:
         started = time.monotonic()
@@ -68,7 +71,7 @@ class AirtypePipeline:
     def start_recording(self) -> "RecordingSession":
         if self.sounds_enabled:
             play_sound(SOUND_START)
-        session = RecordingSession(self.manager)
+        session = RecordingSession(self.manager, on_level=self.on_level)
         session.start()
         return session
 
@@ -106,8 +109,9 @@ class AirtypePipeline:
 
 
 class RecordingSession:
-    def __init__(self, manager: ModelManager) -> None:
+    def __init__(self, manager: ModelManager, on_level: "callable | None" = None) -> None:
         self.manager = manager
+        self._on_level = on_level
         self._audio_data: list[np.ndarray] = []
         self._audio_lock = threading.RLock()
         self._streaming_stop = threading.Event()
@@ -181,6 +185,12 @@ class RecordingSession:
     def _audio_cb(self, indata, frames, time_info, status) -> None:
         with self._audio_lock:
             self._audio_data.append(indata.copy())
+        if self._on_level is not None:
+            # PortAudio callback thread: a raised exception would kill capture.
+            try:
+                self._on_level(float(np.sqrt(np.mean(np.square(indata)))))
+            except Exception:
+                pass
 
     def _snapshot_audio(self) -> np.ndarray:
         with self._audio_lock:

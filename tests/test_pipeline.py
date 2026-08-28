@@ -198,6 +198,7 @@ class AirtypeTests(unittest.TestCase):
         service.pipeline = FakePipeline()
         service._log = lambda *args, **kwargs: None
         service._ipc = mock.Mock()
+        service._overlay = mock.Mock()
         return service
 
     def test_service_super_double_tap_starts_then_alt_tap_stops(self) -> None:
@@ -312,6 +313,27 @@ class AirtypeTests(unittest.TestCase):
 
         self.assertTrue(loaded_now)
         self.assertEqual(text, "hello world")
+
+    def test_audio_cb_reports_block_rms_to_on_level(self) -> None:
+        levels: list[float] = []
+        session = RecordingSession(SlowBorrowManager(), on_level=levels.append)
+        chunk = np.full((SAMPLE_RATE // 10, 1), 0.5, dtype=np.float32)
+
+        session._audio_cb(chunk, len(chunk), None, None)
+
+        self.assertEqual(len(levels), 1)
+        self.assertAlmostEqual(levels[0], 0.5, places=3)
+
+    def test_audio_cb_survives_a_failing_on_level(self) -> None:
+        def broken_level(rms: float) -> None:
+            raise RuntimeError("overlay went away")
+
+        session = RecordingSession(SlowBorrowManager(), on_level=broken_level)
+        chunk = np.full((SAMPLE_RATE // 10, 1), 0.5, dtype=np.float32)
+
+        session._audio_cb(chunk, len(chunk), None, None)
+
+        self.assertGreater(len(session._snapshot_audio()), 0)
 
     def test_pipeline_plays_start_and_stop_sounds_for_recording(self) -> None:
         manager = SlowBorrowManager()
