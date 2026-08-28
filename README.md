@@ -53,6 +53,15 @@ The indicator sits dim while idle, pulses in your theme's active color while rec
 
 Config lives at `~/.config/airtype/config.json` and hot-reloads into the running service. `overlay_enabled` turns the waveform overlay on or off.
 
+## Uninstall
+
+```bash
+omarchy plugin remove topmass.airtype   # remove the bar widget
+airtype uninstall                       # stop + remove the systemd service
+uv tool uninstall airtype               # remove the CLI and venv
+rm -rf ~/.config/airtype ~/.cache/airtype   # config and downloaded models
+```
+
 ## Models
 
 All models run on CPU via sherpa-onnx int8 ONNX:
