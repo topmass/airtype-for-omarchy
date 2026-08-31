@@ -8,7 +8,13 @@ Hold **Super** and double-tap **Alt** to start recording. Tap **Alt** once to st
 
 While you talk, a small waveform pill floats above the bottom edge of the focused monitor, drawn in your active Omarchy theme's accent color. The bars follow your real microphone level and the pill fades out when you stop.
 
-AirType records immediately and loads the ASR model in the background while you talk. It transcribes pause-aware chunks during the recording and unloads the model when done, so the idle service uses about 26 MB of RAM and ~0% CPU.
+## Why AirType
+
+- **Zero idle cost.** The service holds no model when you are not dictating: about 26 MB of RAM and ~0% CPU. The ASR model unloads after every transcription and the memory is returned to the OS.
+- **No cold-start wait.** The microphone opens the instant you hit the hotkey. The model loads in the background during the first seconds of your speech, while the audio is already being captured, so nothing is lost and nothing blocks.
+- **Near-realtime transcription.** While you talk, AirType transcribes pause-aware chunks in the background. When you stop, only the last few seconds remain to process, so the text pastes almost instantly - even on CPU-only laptops with no NVIDIA GPU.
+- **No recording time limit.** Dictate for 30 seconds or 30 minutes; paste latency stays the same because the work already happened while you spoke. There is no duration cap anywhere in the pipeline.
+- **Fits Omarchy.** Theme-matched waveform overlay, bar indicator, terminal-aware paste, systemd user service, gum settings menu.
 
 ## Install the dictation service
 
