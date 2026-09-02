@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "topmass.airtype",
   "name": "AirType",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "author": "topmass",
   "license": "MIT",
   "description": "Push-to-talk dictation with zero idle cost: the ASR model fully unloads between uses (~0% CPU, ~26 MB RAM) and loads back in the background while you are already speaking. Transcription streams during the recording, so there is no length limit and the text is ready to paste the moment you stop. Theme-matched waveform overlay plus this bar indicator with click-to-toggle.",

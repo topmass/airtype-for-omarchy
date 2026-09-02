@@ -1,6 +1,6 @@
 [project]
 name = "airtype"
-version = "2.1.1"
+version = "2.1.2"
 description = "Fast local push-to-talk speech-to-text that gets out of memory when idle"
 requires-python = ">=3.12"
 dependencies = [
