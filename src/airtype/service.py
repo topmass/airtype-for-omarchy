@@ -11,7 +11,7 @@ from .config import CONFIG_PATH, load_config
 from .hotkey import (
     HotkeyPolicy,
     format_hotkey,
-    matching_device_paths,
+    scan_hotkey_devices,
     normalize_hotkey_key_name,
     parse_start_combo,
     start_global_hotkey_listener,
@@ -23,6 +23,12 @@ from .pipeline import AirtypePipeline
 
 LISTENER_HEALTH_INTERVAL = 2.0
 RESUME_GAP_THRESHOLD = 10.0
+# udev sets the `input` group on a new /dev/input node a few ms after it
+# appears. Re-check the device set only once the directory has settled, and
+# keep retrying while a node is still unreadable - but not forever, or a
+# permanently root-only node would cost a full device scan every tick.
+HOTPLUG_SETTLE_SECONDS = 1.0
+HOTPLUG_RETRY_SECONDS = 5.0
 MODIFIER_RELEASE_WAIT = 1.0
 DEBUG = os.environ.get("AIRTYPE_DEBUG") == "1"
 
@@ -223,8 +229,14 @@ class AirtypeService:
         mtime = self._current_input_dir_mtime()
         if mtime == self._input_dir_mtime:
             return
+        # Negative age means the wall clock stepped back; treat as settled.
+        age = time.time() - mtime
+        if 0.0 <= age < HOTPLUG_SETTLE_SECONDS:
+            return
+        current, unreadable = scan_hotkey_devices(set(self._hotkey_keys()))
+        if unreadable and 0.0 <= age < HOTPLUG_RETRY_SECONDS:
+            return
         self._input_dir_mtime = mtime
-        current = matching_device_paths(set(self._hotkey_keys()))
         held = getattr(self._listener, "device_paths", set())
         if current and current != held:
             self._restart_listener("listener restarted after input device change")

@@ -310,33 +310,38 @@ class EvdevHotkeyListener:
         return any(thread.is_alive() for thread in self._threads)
 
 
-def matching_device_paths(hotkey_keys: set[str]) -> set[str]:
-    """Paths of input devices that carry the hotkey key codes right now.
+def scan_hotkey_devices(hotkey_keys: set[str]) -> tuple[set[str], set[str]]:
+    """Return (matching, unreadable) input device paths right now.
 
-    Used by the service's hotplug check to notice keyboards that appear
-    after the listener enumerated devices (USB/2.4G dongles, Bluetooth).
+    `matching` carries the hotkey key codes. `unreadable` could not be
+    opened - usually a node udev has created but not yet chown'd to the
+    `input` group, so the service's hotplug check knows to look again.
+    Used to notice keyboards that appear after the listener enumerated
+    devices (USB/2.4G dongles, Bluetooth).
     """
     try:
         from evdev import InputDevice, ecodes, list_devices
     except ImportError:
-        return set()
+        return set(), set()
 
     needed_codes = {
         code
         for code, key_name in EvdevHotkeyListener._key_code_names(ecodes).items()
         if key_name in hotkey_keys
     }
-    paths: set[str] = set()
+    matching: set[str] = set()
+    unreadable: set[str] = set()
     for path in list_devices():
         try:
             device = InputDevice(path)
             key_caps = set(device.capabilities().get(ecodes.EV_KEY, []))
             device.close()
         except (OSError, PermissionError):
+            unreadable.add(path)
             continue
         if key_caps.intersection(needed_codes):
-            paths.add(path)
-    return paths
+            matching.add(path)
+    return matching, unreadable
 
 
 def start_global_hotkey_listener(on_press_name, on_release_name, hotkey_keys: list[str]):
