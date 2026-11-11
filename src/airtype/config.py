@@ -80,6 +80,7 @@ def default_config() -> dict[str, Any]:
         "super_release_tolerance": 0.5,
         "terminal_classes": list(DEFAULT_TERMINAL_CLASSES),
         "sounds_enabled": True,
+        "remove_fillers": True,
         "overlay_enabled": True,
         "model_download_approved": False,
     }
@@ -133,6 +134,7 @@ def migrate_config(data: dict[str, Any]) -> dict[str, Any]:
             config[key] = max(minimum, float(config[key]))
         except (TypeError, ValueError):
             config[key] = default_config()[key]
+    config["remove_fillers"] = bool(config.get("remove_fillers", True))
     config["sounds_enabled"] = bool(config.get("sounds_enabled", True))
     config["overlay_enabled"] = bool(config.get("overlay_enabled", True))
     return config
@@ -234,6 +236,7 @@ def public_settings() -> dict[str, Any]:
         "start_hotkey": config["start_hotkey"],
         "stop_key": config["stop_key"],
         "sounds_enabled": config["sounds_enabled"],
+        "remove_fillers": config["remove_fillers"],
         "overlay_enabled": config["overlay_enabled"],
         "model_download_approved": bool(config.get("model_download_approved")),
     }

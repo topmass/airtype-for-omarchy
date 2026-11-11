@@ -105,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     settings = subparsers.add_parser("settings", help="show or change settings non-interactively")
     settings.add_argument("--json", action="store_true")
+    settings.add_argument("--remove-fillers", action=argparse.BooleanOptionalAction, default=None)
     settings.add_argument("--paste-mode")
     settings.add_argument("--start-hotkey")
     settings.add_argument("--stop-key")
@@ -146,6 +147,7 @@ def _pipeline(args) -> AirtypePipeline:
         paste_fallback=config["paste_fallback"],
         terminal_classes=config["terminal_classes"],
         sounds_enabled=config["sounds_enabled"],
+        remove_fillers=config["remove_fillers"],
     )
 
 
@@ -261,6 +263,8 @@ def _models(args) -> int:
 
 def _settings(args) -> int:
     changes = {}
+    if args.remove_fillers is not None:
+        changes["remove_fillers"] = args.remove_fillers
     if args.paste_mode:
         changes["paste_mode"] = args.paste_mode
     if args.start_hotkey:
@@ -287,6 +291,7 @@ def _settings(args) -> int:
         print(f"Model dir: {settings['model_dir']} (ready: {'yes' if settings['model_exists'] else 'no'})")
         print(f"Paste mode: {settings['paste_label']} (fallback: {settings['paste_fallback']})")
         print(f"Hotkey: hold+double-tap {settings['start_hotkey']}, stop with {settings['stop_key']}")
+        print(f"Remove filler words: {'on' if settings['remove_fillers'] else 'off'}")
         print(f"Sounds: {'on' if settings['sounds_enabled'] else 'off'}")
     return 0
 

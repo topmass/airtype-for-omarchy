@@ -106,6 +106,7 @@ def run_menu() -> int:
                 "Hotkey",
                 "Terminal classes",
                 "Sounds",
+                "Remove filler words",
                 "Waveform overlay",
                 "Restart service",
                 "Doctor",
@@ -124,6 +125,11 @@ def run_menu() -> int:
             _menu_hotkey()
         elif choice == "Terminal classes":
             _menu_terminal_classes()
+        elif choice == "Remove filler words":
+            enabled = not load_config()["remove_fillers"]
+            update_config(remove_fillers=enabled)
+            _notify_service_reload()
+            print(f"Remove filler words: {'on' if enabled else 'off'}")
         elif choice == "Sounds":
             _menu_sounds()
         elif choice == "Waveform overlay":

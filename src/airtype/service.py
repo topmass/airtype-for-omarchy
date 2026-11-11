@@ -67,6 +67,7 @@ class AirtypeService:
             paste_fallback=config["paste_fallback"],
             terminal_classes=config["terminal_classes"],
             sounds_enabled=config["sounds_enabled"],
+            remove_fillers=config["remove_fillers"],
             pre_paste=self._wait_for_modifier_release,
             on_level=self._overlay.feed,
         )
@@ -188,6 +189,7 @@ class AirtypeService:
             self.pipeline.paste_fallback = new_config["paste_fallback"]
             self.pipeline.terminal_classes = list(new_config["terminal_classes"])
             self.pipeline.sounds_enabled = new_config["sounds_enabled"]
+            self.pipeline.remove_fillers = new_config["remove_fillers"]
 
             if hotkey_changed and self._state != "recording":
                 with self._policy_lock:

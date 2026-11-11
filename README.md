@@ -59,6 +59,11 @@ The indicator sits dim while idle, pulses in your theme's active color while rec
 
 Config lives at `~/.config/airtype/config.json` and hot-reloads into the running service. `overlay_enabled` turns the waveform overlay on or off.
 
+Filler removal is on by default. Toggle **Remove filler words** in `airtype`, or use
+`airtype settings --no-remove-fillers` / `airtype settings --remove-fillers`.
+Standalone um/uh variants are removed before copy/paste. Omarchi, Omarchee, Omarchie,
+and Omarche are corrected to Omarchy independently of this setting.
+
 ## Uninstall
 
 ```bash

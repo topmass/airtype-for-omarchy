@@ -1,3 +1,4 @@
+import re
 import tempfile
 import threading
 import time
@@ -44,10 +45,12 @@ class AirtypePipeline:
         sounds_enabled: bool = True,
         pre_paste: "callable | None" = None,
         on_level: "callable | None" = None,
+        remove_fillers: bool = True,
     ) -> None:
         self.manager = manager or ModelManager()
         self.paste_mode = normalize_paste_mode(paste_mode)
         self.copy = copy
+        self.remove_fillers = remove_fillers
         self.unload_timeout_seconds = unload_timeout_seconds
         self.paste_fallback = paste_fallback
         self.terminal_classes = (
@@ -84,6 +87,16 @@ class AirtypePipeline:
         return result
 
     def _finish(self, text: str, started: float, loaded_now: bool) -> TranscriptResult:
+        if self.remove_fillers:
+            text, fillers = re.subn(
+                r"(?:[ \t]*,[ \t]*)?(?<![\w'’-])u+(?:m+|h+)(?![\w'’-])[,;:]?[ \t]*",
+                lambda match: "" if match.start() == 0 or text[match.start() - 1] == "\n" else " ",
+                text, flags=re.IGNORECASE,
+            )
+            if fillers:
+                text = re.sub(r"[ \t]+", " ", text)
+                text = re.sub(r" +([,.;:!?])", r"\1", text).lstrip(" ,.;:!?\t")
+        text = re.sub(r"\b(?:omarchi|omarchee|omarchie|omarche)\b", "Omarchy", text, flags=re.IGNORECASE)
         text = text.strip()
         copied = copy_to_clipboard(text) if self.copy and text else False
         pasted = False

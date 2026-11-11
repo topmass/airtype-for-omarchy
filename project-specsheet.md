@@ -68,3 +68,7 @@ The repo doubles as an Omarchy shell plugin: `manifest.json` at the root (id `to
 - Parakeet-unified transcribes the bundled test wav in ~1.5s cold (load+decode+unload); moonshine in ~0.5s
 - Kernel-level simulated hotkey: Super+double-Alt starts, Alt+Tab ignored, clean Alt tap stops
 - systemd service: 26 MB idle RSS, 1 CPU tick per 10s idle, evdev listener, single-instance guard, live config reload, journald logging
+
+## Text cleanup (v2.1.3)
+
+`pipeline._finish` removes standalone um/uh variants when `remove_fillers` is enabled (default true), then corrects Omarchi/Omarchee/Omarchie/Omarche to Omarchy. The menu and CLI persist the preference; service reload applies it immediately. Filler-only output leaves the clipboard untouched. Tests live in `tests/test_pipeline.py`.

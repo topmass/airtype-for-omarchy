@@ -387,5 +387,46 @@ class AirtypeTests(unittest.TestCase):
         self.assertGreaterEqual(end, len(speech))
 
 
+    def test_fillers_are_removed_before_copy_and_paste(self) -> None:
+        cases = [
+            ("Um, um, uh, uhh,", ""),
+            ("Um, can you, uh, open that?", "can you open that?"),
+            ("Umm. I want uhhh the blue one, um.", "I want the blue one."),
+            ("Now, uh Yeah, I like that.", "Now Yeah, I like that."),
+            ("umbrella hum U-Haul uh-huh uh-oh like yeah", "umbrella hum U-Haul uh-huh uh-oh like yeah"),
+            ("First line.\nUm, second line.", "First line.\nsecond line."),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw), mock.patch(
+                "airtype.pipeline.copy_to_clipboard", return_value=True
+            ) as copy, mock.patch(
+                "airtype.pipeline.auto_paste", return_value=(True, "wtype")
+            ) as paste:
+                result = cli.AirtypePipeline(
+                    manager=SlowBorrowManager(), paste_mode="ctrl_v"
+                )._finish(raw, time.monotonic(), False)
+                self.assertEqual(result.text, expected)
+                if expected:
+                    copy.assert_called_once_with(expected)
+                    paste.assert_called_once_with("ctrl_v")
+                else:
+                    copy.assert_not_called()
+                    paste.assert_not_called()
+
+
+    def test_filler_preference_off_preserves_speech_and_corrects_omarchy(self) -> None:
+        pipeline = cli.AirtypePipeline(manager=SlowBorrowManager(), copy=False, remove_fillers=False)
+        result = pipeline._finish("Um, Omarchi Omarchee Omarchie Omarche omarchy.", time.monotonic(), False)
+        self.assertEqual(result.text, "Um, Omarchy Omarchy Omarchy Omarchy omarchy.")
+
+    def test_filler_preference_persists_and_reloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            config, "CONFIG_PATH", Path(tmpdir) / "config.json"
+        ), mock.patch.object(cli, "request") as reload_config:
+            self.assertTrue(config.load_config()["remove_fillers"])
+            cli.main(["settings", "--no-remove-fillers", "--json"])
+            self.assertFalse(config.load_config()["remove_fillers"])
+            reload_config.assert_called_once_with("reload-config")
+
 if __name__ == "__main__":
     unittest.main()
