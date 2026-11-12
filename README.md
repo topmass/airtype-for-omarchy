@@ -108,3 +108,7 @@ The Python service lives in `src/airtype/`, the bar widget in `shell/BarWidget.q
 ## License
 
 MIT
+
+### World of Warcraft chat
+
+On Hyprland, AirType uses a virtual keyboard to paste into WoW and Battle.net (`wow.exe` and `steam_app_battlenet`). Focus the chat box or T3 Code addon message field before dictating. AirType copies the transcript, then sends Ctrl+V; it never sends Enter. The first paste waits half a second for keyboard discovery. This requires access to `/dev/uinput`; otherwise the text remains on the clipboard for manual paste. Other applications retain their existing paste method.

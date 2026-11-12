@@ -72,3 +72,7 @@ The repo doubles as an Omarchy shell plugin: `manifest.json` at the root (id `to
 ## Text cleanup (v2.1.3)
 
 `pipeline._finish` removes standalone um/uh variants when `remove_fillers` is enabled (default true), then corrects Omarchi/Omarchee/Omarchie/Omarche to Omarchy. The menu and CLI persist the preference; service reload applies it immediately. Filler-only output leaves the clipboard untouched. Tests live in `tests/test_pipeline.py`.
+
+## WoW paste (v2.1.4)
+
+`clipboard.auto_paste` routes Hyprland classes `wow.exe` and `steam_app_battlenet` to `_paste_with_uinput`. It reuses an evdev virtual keyboard, checks focus again after discovery, and releases the chord in a finally block. Input failures retain clipboard text without retrying the unsuitable Wayland backend. The user confirmed WoW paste works; automated checks mock every input event.

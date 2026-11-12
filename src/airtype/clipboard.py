@@ -6,6 +6,9 @@ import time
 from pathlib import Path
 
 from .config import normalize_paste_mode
+from .terminal import active_window_class
+
+_paste_keyboard = None
 
 YDOTOOL_SOCKET_CANDIDATES = (
     lambda: Path(os.environ["YDOTOOL_SOCKET"]) if os.environ.get("YDOTOOL_SOCKET") else None,
@@ -59,6 +62,9 @@ def auto_paste(mode: str) -> tuple[bool, str]:
     desktop = (os.environ.get("XDG_CURRENT_DESKTOP") or "").upper()
 
     if session_type == "wayland":
+        if (active_window_class() or "").lower() in {"steam_app_battlenet", "wow.exe"}:
+            pasted = _paste_with_uinput(paste_mode)
+            return pasted, "uinput" if pasted else "copy_only"
         if "KDE" not in desktop and _paste_with_wtype(paste_mode):
             return True, "wtype"
         if _paste_with_ydotool(paste_mode):
@@ -70,6 +76,35 @@ def auto_paste(mode: str) -> tuple[bool, str]:
     if _paste_with_pynput(paste_mode):
         return True, "pynput"
     return False, "unavailable"
+
+
+def _paste_with_uinput(mode: str) -> bool:
+    global _paste_keyboard
+    try:
+        from evdev import UInput, ecodes
+
+        if _paste_keyboard is None:
+            _paste_keyboard = UInput(name="AirType paste keyboard")
+            # Allow the compositor to discover the keyboard before its first paste.
+            time.sleep(0.5)
+        if (active_window_class() or "").lower() not in {"steam_app_battlenet", "wow.exe"}:
+            return False
+        keys = [ecodes.KEY_LEFTCTRL]
+        if mode == "ctrl_shift_v":
+            keys.append(ecodes.KEY_LEFTSHIFT)
+        keys.append(ecodes.KEY_V)
+        try:
+            for key in keys:
+                _paste_keyboard.write(ecodes.EV_KEY, key, 1)
+                _paste_keyboard.syn()
+                time.sleep(0.05)
+        finally:
+            for key in reversed(keys):
+                _paste_keyboard.write(ecodes.EV_KEY, key, 0)
+                _paste_keyboard.syn()
+        return True
+    except (ImportError, OSError):
+        return False
 
 
 def describe_auto_paste_backend(mode: str) -> str:
